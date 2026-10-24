@@ -23,7 +23,7 @@ import scraper
 importlib.reload(scraper)
 from scraper import KeibaScraper
 
-APP_VERSION = getattr(scraper, "APP_VERSION", "v2.0.0 (2026-10-24)")
+APP_VERSION = getattr(scraper, "APP_VERSION", "v2.2.0 (2026-10-24)")
 load_all_cache = getattr(scraper, "load_all_cache", lambda: {})
 
 # ページ設定
@@ -1035,49 +1035,90 @@ def main() -> None:
 
         selected_race_id = ""
         selected_kaisai_date = ""
+        reset_seq = st.session_state.get("reset_seq", 0)
 
         if select_mode == "📅 開催日・競馬場から選択":
-            jst = datetime.timezone(datetime.timedelta(hours=9))
-            default_date = datetime.datetime.now(jst).date()
-            picked_date = st.date_input("開催日を選択", value=default_date)
-            kaisai_date_str = picked_date.strftime("%Y%m%d")
-            selected_kaisai_date = kaisai_date_str
+            picked_date = st.date_input(
+                "開催日を選択",
+                value=None,
+                format="YYYY/MM/DD",
+                key=f"date_in_{reset_seq}",
+            )
 
-            with st.spinner("開催レース一覧を取得中..."):
-                races_raw = cached_get_races_for_date(kaisai_date_str, cfg.get("netkeiba_cookie", ""))
-
-            if not races_raw:
-                st.warning(
-                    f"{picked_date.strftime('%Y年%m月%d日')} の中央競馬(JRA)開催データが見つかりません。土・日などの開催日を選択してください。"
+            if picked_date is None:
+                st.selectbox(
+                    "競馬場を選択",
+                    options=[],
+                    index=None,
+                    placeholder="先に開催日を選択してください",
+                    disabled=True,
+                    key=f"venue_empty_{reset_seq}",
+                )
+                st.selectbox(
+                    "レースを選択",
+                    options=[],
+                    index=None,
+                    placeholder="先に競馬場を選択してください",
+                    disabled=True,
+                    key=f"race_empty_{reset_seq}",
                 )
             else:
-                venues = []
-                for r in races_raw:
-                    if r["venue_name"] not in venues:
-                        venues.append(r["venue_name"])
+                kaisai_date_str = picked_date.strftime("%Y%m%d")
+                selected_kaisai_date = kaisai_date_str
 
-                selected_venue = st.selectbox("競馬場を選択", venues)
-                venue_races = [r for r in races_raw if r["venue_name"] == selected_venue]
+                with st.spinner("開催レース一覧を取得中..."):
+                    races_raw = cached_get_races_for_date(kaisai_date_str, cfg.get("netkeiba_cookie", ""))
 
-                race_options = {}
-                default_idx = 0
-                for idx, r in enumerate(venue_races):
-                    label = f"{r['race_num']}R {r['race_name']} ({r['start_time']} {r['course_info']})".strip()
-                    race_options[label] = r["race_id"]
-                    if r["race_num"] == 11:
-                        default_idx = idx
+                if not races_raw:
+                    st.warning(
+                        f"{picked_date.strftime('%Y年%m月%d日')} の中央競馬(JRA)開催データが見つかりません。土・日などの開催日を選択してください。"
+                    )
+                else:
+                    venues = []
+                    for r in races_raw:
+                        if r["venue_name"] not in venues:
+                            venues.append(r["venue_name"])
 
-                selected_label = st.selectbox(
-                    "レースを選択",
-                    list(race_options.keys()),
-                    index=default_idx,
-                )
-                selected_race_id = race_options[selected_label]
+                    selected_venue = st.selectbox(
+                        "競馬場を選択",
+                        venues,
+                        index=None,
+                        placeholder="競馬場を選択してください",
+                        key=f"venue_in_{reset_seq}_{kaisai_date_str}",
+                    )
+
+                    if not selected_venue:
+                        st.selectbox(
+                            "レースを選択",
+                            options=[],
+                            index=None,
+                            placeholder="先に競馬場を選択してください",
+                            disabled=True,
+                            key=f"race_wait_{reset_seq}_{kaisai_date_str}",
+                        )
+                    else:
+                        venue_races = [r for r in races_raw if r["venue_name"] == selected_venue]
+                        race_options = {}
+                        for r in venue_races:
+                            label = f"{r['race_num']}R {r['race_name']} ({r['start_time']} {r['course_info']})".strip()
+                            race_options[label] = r["race_id"]
+
+                        selected_label = st.selectbox(
+                            "レースを選択",
+                            list(race_options.keys()),
+                            index=None,
+                            placeholder="レースを選択してください",
+                            key=f"race_in_{reset_seq}_{kaisai_date_str}_{selected_venue}",
+                        )
+                        if selected_label:
+                            selected_race_id = race_options[selected_label]
 
         else:
             raw_input = st.text_input(
                 "netkeiba 出馬表URL または 12桁 race_id",
+                value="",
                 placeholder="例: https://race.netkeiba.com/race/shutuba.html?race_id=202605040811",
+                key=f"url_in_{reset_seq}",
             )
             m_rid = re.search(r"(\d{12})", raw_input)
             if m_rid:
@@ -1092,12 +1133,20 @@ def main() -> None:
             disabled=(not selected_race_id),
         )
 
-        if st.button("🔄 キャッシュをクリアして再取得", use_container_width=True):
-            st.cache_data.clear()
-            if selected_race_id:
-                st.session_state["current_race_id"] = selected_race_id
-                st.session_state["current_kaisai_date"] = selected_kaisai_date
-            st.rerun()
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("🧹 選択リセット", use_container_width=True, help="開催日・競馬場・レース選択をすべて空欄(初期状態)に戻します"):
+                st.session_state["reset_seq"] = reset_seq + 1
+                st.session_state.pop("current_race_id", None)
+                st.session_state.pop("current_kaisai_date", None)
+                st.rerun()
+        with col_btn2:
+            if st.button("🔄 再取得", use_container_width=True, help="キャッシュをクリアして最新オッズ等を再取得します"):
+                st.cache_data.clear()
+                if selected_race_id:
+                    st.session_state["current_race_id"] = selected_race_id
+                    st.session_state["current_kaisai_date"] = selected_kaisai_date
+                st.rerun()
 
         if selected_kaisai_date and st.button(
             "📦 この開催日の全レース指数を一括保存 (クラウド用)",
@@ -1233,10 +1282,6 @@ def main() -> None:
 
     # セッション状態の初期化・更新
     if fetch_clicked and selected_race_id:
-        st.session_state["current_race_id"] = selected_race_id
-        st.session_state["current_kaisai_date"] = selected_kaisai_date
-
-    if "current_race_id" not in st.session_state and selected_race_id:
         st.session_state["current_race_id"] = selected_race_id
         st.session_state["current_kaisai_date"] = selected_kaisai_date
 
