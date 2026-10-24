@@ -17,7 +17,7 @@ import pandas as pd
 import qrcode
 import streamlit as st
 
-from scraper import KeibaScraper
+from scraper import APP_VERSION, KeibaScraper, load_all_cache
 
 # ページ設定
 st.set_page_config(
@@ -269,31 +269,9 @@ def inject_theme_css(theme: Dict[str, Any], sticky_horse_col: bool = True) -> No
         }}
         """
 
-    dark_overrides = ""
-    if is_dark:
-        dark_overrides = f"""
-        .stMarkdown, .stText, p, span, label, h1, h2, h3, h4, h5, h6 {{
-            color: {text};
-        }}
-        div[data-baseweb="select"] > div {{
-            background-color: {bg} !important;
-            color: {text} !important;
-            border-color: {border} !important;
-        }}
-        input {{
-            color: {text} !important;
-            background-color: {bg} !important;
-        }}
-        div[data-testid="stExpander"] {{
-            background-color: {card_bg} !important;
-            border-color: {border} !important;
-        }}
-        button[kind="secondary"] {{
-            background-color: {card_bg} !important;
-            color: {text} !important;
-            border-color: {border} !important;
-        }}
-        """
+    btn_toggle_bg = "#2563eb" if is_dark else "#e2e8f0"
+    btn_toggle_fg = "#ffffff" if is_dark else "#0f172a"
+    btn_toggle_bd = "#60a5fa" if is_dark else "#94a3b8"
 
     css = f"""
     <style>
@@ -307,8 +285,134 @@ def inject_theme_css(theme: Dict[str, Any], sticky_horse_col: bool = True) -> No
     section[data-testid="stSidebar"] {{
         background-color: {sidebar_bg} !important;
         border-right: 1px solid {border} !important;
+        color: {text} !important;
     }}
-    {dark_overrides}
+    /* サイドバー開閉ボタン (← / →) の視認性を大幅に強化 */
+    [data-testid="stSidebarCollapseButton"] button,
+    [data-testid="collapsedControl"] button,
+    [data-testid="stExpandSidebarButton"],
+    section[data-testid="stSidebar"] [data-testid="stBaseButton-headerNoPadding"],
+    header[data-testid="stHeader"] [data-testid="stBaseButton-headerNoPadding"] {{
+        background-color: {btn_toggle_bg} !important;
+        color: {btn_toggle_fg} !important;
+        border: 2px solid {btn_toggle_bd} !important;
+        border-radius: 8px !important;
+        opacity: 1 !important;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2) !important;
+    }}
+    [data-testid="stSidebarCollapseButton"] svg,
+    [data-testid="collapsedControl"] svg,
+    [data-testid="stExpandSidebarButton"] svg,
+    section[data-testid="stSidebar"] [data-testid="stBaseButton-headerNoPadding"] svg,
+    header[data-testid="stHeader"] [data-testid="stBaseButton-headerNoPadding"] svg {{
+        fill: {btn_toggle_fg} !important;
+        color: {btn_toggle_fg} !important;
+        stroke: {btn_toggle_fg} !important;
+        opacity: 1 !important;
+    }}
+    /* サイドバーおよびメイン領域の見出し・ラベル・選択肢の文字色をくっきり表示 */
+    .stMarkdown, .stText, p, span, label, h1, h2, h3, h4, h5, h6,
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3,
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] span,
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+    section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+    section[data-testid="stSidebar"] div[role="radiogroup"] label,
+    section[data-testid="stSidebar"] div[role="radiogroup"] p,
+    section[data-testid="stSidebar"] div[role="radiogroup"] span,
+    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label,
+    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] p,
+    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] span,
+    [data-testid="stWidgetLabel"] p,
+    div[role="radiogroup"] p,
+    div[role="radiogroup"] span {{
+        color: {text} !important;
+        opacity: 1 !important;
+    }}
+    /* セレクトボックス・日付入力・テキスト入力の背景と文字色 */
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="base-input"],
+    div[data-baseweb="input"] {{
+        background-color: {bg} !important;
+        color: {text} !important;
+        border-color: {border} !important;
+    }}
+    div[data-baseweb="select"] span,
+    div[data-baseweb="select"] div,
+    div[data-baseweb="select"] input,
+    div[data-testid="stDateInput"] input,
+    input[type="text"],
+    input[type="password"] {{
+        color: {text} !important;
+        -webkit-text-fill-color: {text} !important;
+        background-color: transparent !important;
+        font-weight: 600 !important;
+    }}
+    div[data-baseweb="select"] svg {{
+        fill: {text} !important;
+        color: {text} !important;
+    }}
+    /* ドロップダウンメニュー展開時のリスト文字色 */
+    div[data-baseweb="popover"] ul,
+    div[data-baseweb="popover"] li,
+    div[data-baseweb="menu"] {{
+        background-color: {card_bg} !important;
+        color: {text} !important;
+    }}
+    div[data-baseweb="popover"] li:hover {{
+        background-color: {row_hover} !important;
+    }}
+    /* 折りたたみ (Expander) & タブ & セカンダリボタン */
+    div[data-testid="stExpander"] {{
+        background-color: {card_bg} !important;
+        border: 1px solid {border} !important;
+        border-radius: 8px !important;
+    }}
+    div[data-testid="stExpander"] summary,
+    div[data-testid="stExpander"] summary p,
+    div[data-testid="stExpander"] summary span,
+    div[data-testid="stExpander"] summary svg {{
+        color: {text} !important;
+        fill: {text} !important;
+        font-weight: 700 !important;
+    }}
+    button[data-baseweb="tab"] p,
+    button[data-baseweb="tab"] span {{
+        color: {text} !important;
+        font-weight: 700 !important;
+    }}
+    button[kind="secondary"] {{
+        background-color: {card_bg} !important;
+        color: {text} !important;
+        border: 1px solid {border} !important;
+    }}
+    button[kind="secondary"] p,
+    button[kind="secondary"] span {{
+        color: {text} !important;
+    }}
+    button[kind="primary"] p,
+    button[kind="primary"] span {{
+        color: #ffffff !important;
+        font-weight: 800 !important;
+    }}
+    .version-badge {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: {bg};
+        color: {text};
+        border: 1px solid {border};
+        border-radius: 8px;
+        padding: 5px 10px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        margin-bottom: 0.6rem;
+        width: 100%;
+        justify-content: space-between;
+    }}
     .main-header {{
         background: {header_grad};
         color: white;
@@ -892,11 +996,21 @@ def resolve_current_theme(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 def main() -> None:
     cfg = load_user_config()
+    cached_races_count = len(load_all_cache())
 
     # ------------------------------------------------------------------
-    # サイドバー: レース選択 & 画面テーマ & スマホ接続QR
+    # サイドバー: バージョン情報 & レース選択 & 画面テーマ & スマホ接続QR
     # ------------------------------------------------------------------
     with st.sidebar:
+        st.markdown(
+            f'<div class="version-badge">'
+            f"<span>🔖 {APP_VERSION}</span>"
+            f'<span style="background:#2563eb;color:#ffffff;padding:1px 7px;border-radius:99px;font-size:0.72rem;">'
+            f"📦 {cached_races_count}R収録"
+            f"</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
         st.header("🔍 レース選択")
 
         select_mode = st.radio(
@@ -1091,7 +1205,13 @@ def main() -> None:
     # ヘッダー
     st.markdown(
         '<div class="main-header">'
+        '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
         "<h1>🏇 競馬予想 マルチ指数＆AI ポイント総合集計アプリ</h1>"
+        f'<span style="background:rgba(255,255,255,0.18);color:#ffffff;border:1px solid rgba(255,255,255,0.35);'
+        f'padding:3px 10px;border-radius:999px;font-size:0.78rem;font-weight:700;">'
+        f"🔖 {APP_VERSION} ｜ 📦 {cached_races_count}R内蔵"
+        f"</span>"
+        "</div>"
         "<p>netkeiba出馬表 × UMA-X偏差値(4項目) × 競馬ラボΩ指数 × 無料競馬AI(2項目) × keiba-ai着順予想 の計8項目(最大80pt)を自動集計・可視化</p>"
         "</div>",
         unsafe_allow_html=True,
