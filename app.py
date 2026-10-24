@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import datetime
+import importlib
 import io
 import json
 import re
@@ -17,7 +18,13 @@ import pandas as pd
 import qrcode
 import streamlit as st
 
-from scraper import APP_VERSION, KeibaScraper, load_all_cache
+import scraper
+
+importlib.reload(scraper)
+from scraper import KeibaScraper
+
+APP_VERSION = getattr(scraper, "APP_VERSION", "v2.0.0 (2026-10-24)")
+load_all_cache = getattr(scraper, "load_all_cache", lambda: {})
 
 # ページ設定
 st.set_page_config(
@@ -310,62 +317,64 @@ def inject_theme_css(theme: Dict[str, Any], sticky_horse_col: bool = True) -> No
         stroke: {btn_toggle_fg} !important;
         opacity: 1 !important;
     }}
-    /* サイドバーおよびメイン領域の見出し・ラベル・選択肢の文字色をくっきり表示 */
-    .stMarkdown, .stText, p, span, label, h1, h2, h3, h4, h5, h6,
+    /* 見出し・項目ラベル・ラジオボタン・チェックボックスの文字色（入力ボックス内部は除外） */
+    h2, h3, h4, h5, h6,
     section[data-testid="stSidebar"] h1,
     section[data-testid="stSidebar"] h2,
     section[data-testid="stSidebar"] h3,
-    section[data-testid="stSidebar"] p,
-    section[data-testid="stSidebar"] span,
-    section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
-    section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-    section[data-testid="stSidebar"] div[role="radiogroup"] label,
-    section[data-testid="stSidebar"] div[role="radiogroup"] p,
-    section[data-testid="stSidebar"] div[role="radiogroup"] span,
-    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label,
-    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] p,
-    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] span,
     [data-testid="stWidgetLabel"] p,
-    div[role="radiogroup"] p,
-    div[role="radiogroup"] span {{
+    [data-testid="stWidgetLabel"] label,
+    div[role="radiogroup"] label p,
+    div[role="radiogroup"] label span,
+    div[data-testid="stCheckbox"] label p,
+    div[data-testid="stCheckbox"] label span,
+    [data-testid="stCaptionContainer"] p {{
         color: {text} !important;
         opacity: 1 !important;
     }}
-    /* セレクトボックス・日付入力・テキスト入力の背景と文字色 */
+    /* 選択項目（開催日・競馬場・レース等の入力枠）は常に白背景＋濃黒文字に固定して白文字化を完全防止 */
     div[data-baseweb="select"] > div,
     div[data-baseweb="base-input"],
-    div[data-baseweb="input"] {{
-        background-color: {bg} !important;
-        color: {text} !important;
-        border-color: {border} !important;
+    div[data-baseweb="input"],
+    div[data-testid="stDateInput"] div[data-baseweb="input"] {{
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border: 1.5px solid #64748b !important;
+        border-radius: 6px !important;
     }}
     div[data-baseweb="select"] span,
     div[data-baseweb="select"] div,
     div[data-baseweb="select"] input,
     div[data-testid="stDateInput"] input,
+    div[data-baseweb="input"] input,
     input[type="text"],
     input[type="password"] {{
-        color: {text} !important;
-        -webkit-text-fill-color: {text} !important;
-        background-color: transparent !important;
-        font-weight: 600 !important;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        background-color: #ffffff !important;
+        font-weight: 700 !important;
+        opacity: 1 !important;
     }}
     div[data-baseweb="select"] svg {{
-        fill: {text} !important;
-        color: {text} !important;
+        fill: #0f172a !important;
+        color: #0f172a !important;
     }}
-    /* ドロップダウンメニュー展開時のリスト文字色 */
+    /* ドロップダウンリスト展開時（ポップオーバー）も白背景＋濃黒文字に固定 */
     div[data-baseweb="popover"] ul,
     div[data-baseweb="popover"] li,
-    div[data-baseweb="menu"] {{
-        background-color: {card_bg} !important;
-        color: {text} !important;
+    div[data-baseweb="popover"] span,
+    div[data-baseweb="popover"] div,
+    div[data-baseweb="menu"] * {{
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        font-weight: 600 !important;
     }}
-    div[data-baseweb="popover"] li:hover {{
-        background-color: {row_hover} !important;
+    div[data-baseweb="popover"] li:hover,
+    div[data-baseweb="popover"] li:hover * {{
+        background-color: #dbeafe !important;
+        color: #1e3a8a !important;
     }}
-    /* 折りたたみ (Expander) & タブ & セカンダリボタン */
+    /* 折りたたみ (Expander) & タブ & ボタン */
     div[data-testid="stExpander"] {{
         background-color: {card_bg} !important;
         border: 1px solid {border} !important;
@@ -402,9 +411,9 @@ def inject_theme_css(theme: Dict[str, Any], sticky_horse_col: bool = True) -> No
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        background: {bg};
-        color: {text};
-        border: 1px solid {border};
+        background: {card_bg};
+        color: {text} !important;
+        border: 1.5px solid {border};
         border-radius: 8px;
         padding: 5px 10px;
         font-size: 0.78rem;
@@ -415,20 +424,25 @@ def inject_theme_css(theme: Dict[str, Any], sticky_horse_col: bool = True) -> No
     }}
     .main-header {{
         background: {header_grad};
-        color: white;
+        color: #ffffff !important;
         padding: 1.0rem 1.4rem;
         border-radius: 12px;
         margin-bottom: 1rem;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
     }}
-    .main-header h1 {{
-        color: white !important;
+    .main-header h1,
+    .main-header h1 * {{
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
         font-size: 1.45rem !important;
         margin: 0 0 0.25rem 0 !important;
         font-weight: 800 !important;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
     }}
-    .main-header p {{
-        color: #e2e8f0 !important;
+    .main-header p,
+    .main-header p * {{
+        color: #f1f5f9 !important;
+        -webkit-text-fill-color: #f1f5f9 !important;
         font-size: 0.85rem !important;
         margin: 0 !important;
     }}
