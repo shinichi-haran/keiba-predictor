@@ -16,11 +16,30 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+
+CACHE_FILE = Path(__file__).parent / "race_cache.json"
+
+
+def load_all_cache() -> Dict[str, Any]:
+    if CACHE_FILE.exists():
+        try:
+            return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def save_all_cache(cache_data: Dict[str, Any]) -> None:
+    try:
+        CACHE_FILE.write_text(json.dumps(cache_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -605,6 +624,8 @@ class KeibaScraper:
             status.message = f"取得エラー: {e}"
             return result, status
 
+    _muryou_page_html_cache: Dict[str, str] = {}
+
     # ------------------------------------------------------------------
     # ③ 無料競馬AI (muryou-keiba-ai.jp) オリジンAI・ウェーブAI 取得
     # ------------------------------------------------------------------
@@ -623,24 +644,27 @@ class KeibaScraper:
         )
 
         candidate_list_urls = [
-            f"https://muryou-keiba-ai.jp/predict/course/{meta.venue_slug}/",
             "https://muryou-keiba-ai.jp/",
+            f"https://muryou-keiba-ai.jp/predict/course/{meta.venue_slug}/",
             f"https://muryou-keiba-ai.jp/predict/?y={year}&month={month:02d}",
             f"https://muryou-keiba-ai.jp/predict/course/{meta.venue_slug}/page/2/",
         ]
 
         for list_url in candidate_list_urls:
             try:
-                resp = self._get(list_url)
-                if resp.status_code != 200:
-                    continue
-                html = self._decode_html(resp)
+                if list_url in KeibaScraper._muryou_page_html_cache:
+                    html = KeibaScraper._muryou_page_html_cache[list_url]
+                else:
+                    resp = self._get(list_url)
+                    if resp.status_code != 200:
+                        continue
+                    html = self._decode_html(resp)
+                    KeibaScraper._muryou_page_html_cache[list_url] = html
                 soup = BeautifulSoup(html, "html.parser")
                 for a in soup.find_all("a", href=re.compile(r"/predict/\d{4}/\d{2}/\d{2}/\d+/")):
                     text = a.get_text(" ", strip=True)
                     if pattern.search(text):
                         href = a.get("href", "")
-                        # 念のためURL内の年と対象年が一致するか確認（1月開催で12月投稿等のケースは前後1年許容）
                         m_yr = re.search(r"/predict/(\d{4})/", href)
                         if m_yr and abs(int(m_yr.group(1)) - year) <= 1:
                             return href
@@ -715,6 +739,8 @@ class KeibaScraper:
             status.message = f"取得エラー: {e}"
             return origin_scores, wave_scores, status
 
+    _keiba_ai_page_html_cache: Dict[str, str] = {}
+
     # ------------------------------------------------------------------
     # ④ keiba-ai.jp (AI ATHENA) 着順予想取得
     # ------------------------------------------------------------------
@@ -737,12 +763,15 @@ class KeibaScraper:
         ai_indices: Dict[int, str] = {}
 
         try:
-            resp = self._get(page_url)
-            if resp.status_code != 200:
-                status.message = f"HTTP {resp.status_code} (当日予想未公開の可能性)"
-                return pred_ranks, ai_indices, status
-
-            html = self._decode_html(resp)
+            if page_url in KeibaScraper._keiba_ai_page_html_cache:
+                html = KeibaScraper._keiba_ai_page_html_cache[page_url]
+            else:
+                resp = self._get(page_url)
+                if resp.status_code != 200:
+                    status.message = f"HTTP {resp.status_code} (当日予想未公開の可能性)"
+                    return pred_ranks, ai_indices, status
+                html = self._decode_html(resp)
+                KeibaScraper._keiba_ai_page_html_cache[page_url] = html
             soup = BeautifulSoup(html, "html.parser")
 
             panel = soup.find("div", id=panel_id)
@@ -832,21 +861,80 @@ class KeibaScraper:
         umabans: List[int] = df["馬番"].tolist()
         scratched_set = set(df.loc[df["取消"] == True, "馬番"].tolist())
 
+        all_cache = load_all_cache()
+        race_cached = all_cache.get(race_id, {})
+        cache_updated = False
+
         # ② UMA-X 偏差値 (総合, SP, AG, 実績)
-        umax_data, st_umax = self.fetch_umax(meta)
+        if race_cached.get("umax"):
+            umax_data = {int(k): v for k, v in race_cached["umax"].items()}
+            year = meta.race_id[0:4]
+            umax_id = f"{int(meta.venue_code)}{year}{meta.kai}{meta.day}{meta.race_num:02d}{meta.kaisai_date}"
+            st_umax = SiteStatus(
+                site_name="UMA-X (偏差値)",
+                url=f"https://uma-x.jp/race_result/{umax_id}",
+                success=True,
+                message=f"{len(umax_data)}頭の偏差値を取得(キャッシュ)",
+            )
+        else:
+            umax_data, st_umax = self.fetch_umax(meta)
+            if st_umax.success and umax_data:
+                race_cached["umax"] = {str(k): v for k, v in umax_data.items()}
+                cache_updated = True
         statuses.append(st_umax)
 
         # ②-2 競馬ラボ Ω指数
-        omega_data, st_klab = self.fetch_keibalab_omega(meta)
+        if race_cached.get("omega"):
+            omega_data = {int(k): v for k, v in race_cached["omega"].items()}
+            klab_id = f"{meta.kaisai_date}{meta.venue_code}{meta.race_num:02d}"
+            st_klab = SiteStatus(
+                site_name="競馬ラボ (Ω指数)",
+                url=f"https://www.keibalab.jp/db/race/{klab_id}/umabashira.html",
+                success=True,
+                message=f"{len(omega_data)}頭のΩ指数を取得(キャッシュ)",
+            )
+        else:
+            omega_data, st_klab = self.fetch_keibalab_omega(meta)
+            if st_klab.success and omega_data:
+                race_cached["omega"] = {str(k): v for k, v in omega_data.items()}
+                cache_updated = True
         statuses.append(st_klab)
 
         # ③ 無料競馬AI (オリジンAI, ウェーブAI)
-        origin_data, wave_data, st_mai = self.fetch_muryou_ai(meta)
+        if race_cached.get("origin") or race_cached.get("wave"):
+            origin_data = {int(k): v for k, v in race_cached.get("origin", {}).items()}
+            wave_data = {int(k): v for k, v in race_cached.get("wave", {}).items()}
+            st_mai = SiteStatus(
+                site_name="無料競馬AI (オリジン/ウェーブ)",
+                url=race_cached.get("muryou_url", "https://muryou-keiba-ai.jp/"),
+                success=True,
+                message=f"オリジン:{len(origin_data)}頭 / ウェーブ:{len(wave_data)}頭 取得(キャッシュ)",
+            )
+        else:
+            origin_data, wave_data, st_mai = self.fetch_muryou_ai(meta)
+            if st_mai.success and (origin_data or wave_data):
+                race_cached["origin"] = {str(k): v for k, v in origin_data.items()}
+                race_cached["wave"] = {str(k): v for k, v in wave_data.items()}
+                race_cached["muryou_url"] = st_mai.url
+                cache_updated = True
         statuses.append(st_mai)
 
-        # ④ keiba-ai.jp (着順予想)
+        # ④ keiba-ai.jp (着順予想) - クラウドからも直接取得可能だがキャッシュもフォールバック保持
         athena_ranks, athena_ai_str, st_kai = self.fetch_keiba_ai(meta)
+        if st_kai.success and athena_ranks:
+            race_cached["athena_ranks"] = {str(k): v for k, v in athena_ranks.items()}
+            race_cached["athena_ai_str"] = {str(k): v for k, v in athena_ai_str.items()}
+            cache_updated = True
+        elif race_cached.get("athena_ranks"):
+            athena_ranks = {int(k): v for k, v in race_cached["athena_ranks"].items()}
+            athena_ai_str = {int(k): v for k, v in race_cached.get("athena_ai_str", {}).items()}
+            st_kai.success = True
+            st_kai.message = f"{len(athena_ranks)}頭の着順予想を取得(キャッシュ)"
         statuses.append(st_kai)
+
+        if cache_updated:
+            all_cache[race_id] = race_cached
+            save_all_cache(all_cache)
 
         # 各項目の生データを馬番辞書に整理 (取消馬はポイント計算から除外するためランク用辞書ではNoneにする)
         raw_uma_total = {u: umax_data.get(u, {}).get("UMA_総合") for u in umabans}

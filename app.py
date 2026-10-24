@@ -971,6 +971,18 @@ def main() -> None:
                 st.session_state["current_kaisai_date"] = selected_kaisai_date
             st.rerun()
 
+        if selected_kaisai_date and st.button(
+            "📦 この開催日の全レース指数を一括保存 (クラウド用)",
+            use_container_width=True,
+            help="UMA-X・競馬ラボ・無料競馬AIの指数を選択日全レース分まとめて race_cache.json に保存します。",
+        ):
+            from prefetch_weekend import prefetch_dates
+
+            with st.spinner(f"{selected_kaisai_date} の全レース指数を一括取得・保存中..."):
+                cnt = prefetch_dates([selected_kaisai_date])
+                st.cache_data.clear()
+            st.success(f"全レース一括保存完了！（累計 {cnt} レース）")
+
         st.divider()
 
         # 🎨 画面テーマ・背景色設定
@@ -1002,29 +1014,22 @@ def main() -> None:
 
         # 📱 スマートフォン・他端末接続 (QRコード付き)
         with st.expander("📱 スマホ・他端末から使う", expanded=False):
-            tunnel_file = Path(__file__).parent / "public_tunnel_url.txt"
-            tunnel_url = ""
-            if tunnel_file.exists():
-                try:
-                    tunnel_url = tunnel_file.read_text(encoding="utf-8").strip()
-                except Exception:
-                    pass
-
-            if tunnel_url:
-                st.success("🌐 外出先（4G/5G回線）対応URLが有効です！")
-                st.markdown(f"🔗 **外出先URL**: `{tunnel_url}`")
-                try:
-                    qr_t = make_qr_png_bytes(tunnel_url)
-                    st.image(qr_t, caption=f"外出先用QRコード ({tunnel_url})", width=180)
-                except Exception:
-                    pass
-                st.markdown("---")
-
+            cloud_url = "https://keiba-predictor-3kuzt9et8q4ir44n97iyda.streamlit.app/"
+            st.markdown(
+                f"**☁️ 外出先（4G/5G・競馬場）専用クラウドURL**:\n"
+                f"PCの電源がOFFでもスマホ単独で24時間使えます。\n\n"
+                f"🔗 [{cloud_url}]({cloud_url})"
+            )
+            try:
+                qr_cloud = make_qr_png_bytes(cloud_url)
+                st.image(qr_cloud, caption="スマホカメラでスキャン (クラウド版)", width=180)
+            except Exception:
+                pass
+            st.markdown("---")
             local_ip = get_local_ip()
             mobile_url = f"http://{local_ip}:8502"
             st.markdown(
-                f"**自宅Wi-Fi接続用URL**:\n"
-                f"同じWi-Fiに接続したスマホで以下のQRコードを読み取るか、URLを開いてください。\n\n"
+                f"**🏠 自宅Wi-Fi接続用URL**:\n"
                 f"🔗 `{mobile_url}`"
             )
             try:
@@ -1032,9 +1037,6 @@ def main() -> None:
                 st.image(qr_bytes, caption=f"自宅Wi-Fi用QRコード ({mobile_url})", width=180)
             except Exception:
                 pass
-            st.caption(
-                "※ 外出先から使う場合は『外出先スマホ接続_トンネル起動.bat』を起動するか、Streamlit Community Cloudへデプロイしてください。"
-            )
 
         with st.expander("📋 ポイント付与ルール確認", expanded=False):
             st.markdown(
