@@ -19,11 +19,14 @@ import qrcode
 import streamlit as st
 
 import scraper
+import simulator
 
 importlib.reload(scraper)
+importlib.reload(simulator)
 from scraper import KeibaScraper
+from simulator import render_simulation_section
 
-APP_VERSION = getattr(scraper, "APP_VERSION", "v2.2.0 (2026-10-24)")
+APP_VERSION = getattr(scraper, "APP_VERSION", "v2.3.0 (2026-11-07)")
 load_all_cache = getattr(scraper, "load_all_cache", lambda: {})
 
 # ページ設定
@@ -1556,6 +1559,20 @@ def main() -> None:
         ]
         avail_raw = [c for c in raw_cols if c in display_df.columns]
         st.dataframe(display_df[avail_raw], use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # ⑦ ウイニングポスト風 レースシミュレーション & 能力連動システム
+    # ------------------------------------------------------------------
+    render_simulation_section(
+        df=df,
+        meta_dict=meta_dict,
+        waku_style=WAKU_STYLE,
+        cfg=cfg,
+        save_cfg_fn=save_user_config,
+        theme=current_theme,
+    )
 
 
 if __name__ == "__main__":
